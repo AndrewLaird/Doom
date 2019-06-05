@@ -56,7 +56,7 @@ class Model(nn.Module):
 
 
         #print("after pool size", x.shape)
-        return F.relu(self.dense1(x))
+        return F.softmax(self.dense1(x))
 
         #return F.relu(self.conv2(x))
 
@@ -64,52 +64,66 @@ class Model(nn.Module):
 def backup_rewards(training_data):
     nn_training_data =[]
     running_reward = 0
+    #only keep sucessful games
+    print(training_data[-1][2])
+    total_sum = 0
+
 
     for i in range(len(training_data)-1,0,-1):
 
         action_prob,action,reward,_ = training_data[i]
-        running_reward += reward
+        total_sum += reward
+        running_reward += reward #remove negative rewards
         nn_training_data.append((action_prob,action,running_reward))
+
+    print("total_sum",total_sum)
+    #if(total_sum < 0):
+    #    return []
     return nn_training_data
 
-exploration = .1
+exploration = .33
 
 def play_game(env,model,render=False):
     observation = env.reset()
     terminal = False
     training_data =[]
     steps = 0
+    action = None
 
     while not terminal:
         if(render):
             env.render()
-        action_probs = model.forward(observation)
-        numpy_probs = np.array(action_probs.detach()[0])
-        # deal with nans
-        nans = np.isnan(numpy_probs)
-        for i in range(len(numpy_probs)):
-            if(nans[i]):
-                numpy_probs[i] = 0
-        base_sum = np.sum(numpy_probs)
-        #print(base_sum,numpy_probs)
-        if(base_sum ==0):
-            #make them all equally likely
-            numpy_probs = np.array([1.0,1.0,1.0])
+        if(steps % 10 == 0):
+            action_probs = model.forward(observation)
+            numpy_probs = np.array(action_probs.detach()[0])
+            # deal with nans
+            nans = np.isnan(numpy_probs)
+            for i in range(len(numpy_probs)):
+                if(nans[i]):
+                    numpy_probs[i] = 0
+            base_sum = np.sum(numpy_probs)
+            #print(base_sum,numpy_probs)
+            if(base_sum ==0):
+                #make them all equally likely
+                numpy_probs = np.array([1.0,1.0,1.0])
 
-            base_sum = 3.0
+                base_sum = 3.0
 
-        numpy_probs = numpy_probs/base_sum
-        action = np.random.choice(3,1,p=numpy_probs)
-        if(np.random.rand(1) < exploration):
-            action = [env.action_space.sample()]
-        #print("action",action)
-        observation,reward,terminal,info = env.step(action)
-        if(terminal or steps>1000):
-            break
-        else:
-            steps += 1
-            #print("reward:",reward)
+            numpy_probs = numpy_probs/base_sum
+            action = np.random.choice(3,1,p=numpy_probs)
+            if(np.random.rand(1) < exploration):
+                action = [env.action_space.sample()]
+            print(numpy_probs,action)
+            #print("action",action)
+            observation,reward,terminal,info = env.step(action)
+            print(reward,terminal)
             training_data.append((action_probs[0],action[0],reward,None))
+            if(terminal):
+                break
+        else:
+            observation,reward,terminal,info = env.step(action)
+
+        steps += 1
 
     nn_training_data = backup_rewards(training_data)
     #print(nn_training_data)
@@ -134,7 +148,7 @@ def train_on_data(model,optimizer,data):
         if(r==0):
             continue
 
-        loss += (action_prob - torch.Tensor(target)).pow(2) * -(r/abs(r))
+        loss += (action_prob - torch.Tensor(target)).pow(2) #* -(r/abs(r))#just the sign of r
         
 
     #action_probs = np.array(action_probs)
@@ -173,11 +187,13 @@ if __name__ == "__main__":
     while True:
         try:
             training_data= []
-            for game in range(3):
+            #while(len(training_data) < 3):
+            for game in range(10):
                 #print("\r",game)
-                game_data =play_game(env,model,render=False)#True)
+                game_data =play_game(env,model,render=True)#False)#True)
                 training_data.extend(game_data)
             #print("start training")
+            print("training on data:",len(training_data))
             loss =train_on_data(model,optimizer,training_data)
             #print('end training')
         except vizdoom.vizdoom.SignalException:
